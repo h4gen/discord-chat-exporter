@@ -1,6 +1,6 @@
 {
-  "name": "discord-downloader",
-  "displayName": "Discord Channel & DM Downloader",
+  "name": "discord-chat-exporter",
+  "displayName": "Discord Chat Exporter - Unlimited",
   "version": "1.0.0",
   "description": "Securely backup and export your Discord server channels and Direct Messages locally.",
   "author": "h4gen",
