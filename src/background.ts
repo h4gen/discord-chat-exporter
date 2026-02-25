@@ -50,7 +50,8 @@ async function startDownloadEngine() {
       const cutoffDate = new Date()
       if (timeDeltaUnit !== 'all') {
         const val = parseInt(timeDeltaValue as any)
-        if (timeDeltaUnit === 'days') cutoffDate.setDate(cutoffDate.getDate() - val)
+        if (timeDeltaUnit === 'hours') cutoffDate.setHours(cutoffDate.getHours() - val)
+        else if (timeDeltaUnit === 'days') cutoffDate.setDate(cutoffDate.getDate() - val)
         else if (timeDeltaUnit === 'weeks') cutoffDate.setDate(cutoffDate.getDate() - (val * 7))
         else if (timeDeltaUnit === 'months') cutoffDate.setMonth(cutoffDate.getMonth() - val)
         else if (timeDeltaUnit === 'years') cutoffDate.setFullYear(cutoffDate.getFullYear() - val)

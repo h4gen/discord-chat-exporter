@@ -185,6 +185,7 @@ export default function SelectChannelsPage() {
               onChange={(e) => setTimeDeltaUnit(e.target.value)}
               className="text-xs border rounded p-1 bg-background text-foreground focus:ring-1 focus:ring-primary outline-none"
             >
+              <option value="hours">Hours</option>
               <option value="days">Days</option>
               <option value="weeks">Weeks</option>
               <option value="months">Months</option>
