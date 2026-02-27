@@ -1,15 +1,16 @@
 import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
-import { StorageManager } from "~lib/storage-manager"
+import { StorageManager, storage } from "~lib/storage-manager"
 import { getPrivateChannels } from "~lib/discord-api"
 import type { Message, Guild, Channel } from "~lib/discord-api"
 import { Button } from "~components/ui/button"
 import { ScrollArea } from "~components/ui/scroll-area"
 import { Badge } from "~components/ui/badge"
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "~components/ui/accordion"
+import { useStorage } from "@plasmohq/storage/hook"
 import { 
   Database, 
-  Download, 
+  DownloadCloud, 
   Trash2, 
   Server, 
   Hash, 
@@ -17,7 +18,7 @@ import {
   FileJson, 
   FileSpreadsheet,
   Clock,
-  DownloadCloud
+  MessagesSquare
 } from "lucide-react"
 
 interface ChannelStats {
@@ -31,10 +32,17 @@ interface GuildGroup {
   channels: ChannelStats[]
 }
 
+export const FULL_CSV_COLUMNS = [
+  "Server", "Channel", "Thread", "Thread ID", "Message ID", 
+  "Author ID", "Author Name", "Timestamp", "Content"
+]
+
 export default function DataViewPage() {
+  const [exportColumns] = useStorage<string[]>({ key: "export_columns", instance: storage as any }, FULL_CSV_COLUMNS)
   const [groups, setGroups] = useState<GuildGroup[]>([])
   const [isLoading, setIsLoading] = useState(true)
-
+  const [expandedGuild, setExpandedGuild] = useState<string>("")
+  
   const loadData = async () => {
     setIsLoading(true)
     let meta = await StorageManager.getMetadata()
@@ -112,7 +120,7 @@ export default function DataViewPage() {
       return `"${str}"`
     }
 
-    const headers = ["Server", "Channel", "Message ID", "Author ID", "Author Name", "Timestamp", "Content"]
+    const headers = exportColumns && exportColumns.length > 0 ? exportColumns : FULL_CSV_COLUMNS;
     const rows = [headers.join(",")]
     
     msgs.forEach(m => {
@@ -120,15 +128,19 @@ export default function DataViewPage() {
       const channel = meta.channels[cId] || { name: cId, guild_id: 'unknown' }
       const guild = meta.guilds[channel.guild_id] || { name: channel.guild_id }
       
-      const row = [
-        escape(guild.name),
-        escape(channel.name),
-        m.id,
-        m.author.id,
-        escape(m.author.username),
-        m.timestamp,
-        escape(m.content)
-      ]
+      const valMap: Record<string, string> = {
+        "Server": escape(guild.name),
+        "Channel": escape(channel.name),
+        "Thread": escape((m as any).thread_name || ""),
+        "Thread ID": (m as any).thread_id || "",
+        "Message ID": m.id,
+        "Author ID": m.author.id,
+        "Author Name": escape(m.author.username),
+        "Timestamp": m.timestamp,
+        "Content": escape(m.content)
+      }
+
+      const row = headers.map(h => valMap[h] || "")
       rows.push(row.join(","))
     })
 
@@ -174,6 +186,13 @@ export default function DataViewPage() {
     }
   }
 
+  const handleDeleteAll = async () => {
+    if (confirm("Are you SURE you want to delete ALL cached data? This cannot be undone.")) {
+      await StorageManager.clearAllData()
+      await loadData()
+    }
+  }
+
   if (isLoading) {
     return <div className="flex-1 flex items-center justify-center text-muted-foreground">
       <Loader2 className="w-8 h-8 animate-spin text-primary" />
@@ -197,26 +216,37 @@ export default function DataViewPage() {
           <h2 className="text-sm font-bold">Local Archives</h2>
           <span className="text-[10px] text-muted-foreground font-medium">{groups.reduce((acc, g) => acc + g.channels.length, 0)} cached channels</span>
         </div>
-        <Button 
-          variant="outline" 
-          size="sm" 
-          className="h-8 gap-1.5 text-[11px] font-bold border-primary/20 hover:bg-primary/5 text-primary"
-          onClick={async () => {
-             const allMsgs: Message[] = []
-             const meta = await StorageManager.getMetadata()
-             for(const g of groups) {
-               for(const s of g.channels) {
-                 const m = await StorageManager.getMessages(s.channel.id)
-                 for (const msg of m) allMsgs.push(msg)
+        <div className="flex gap-2">
+          <Button 
+            variant="outline" 
+            size="sm" 
+            className="h-8 gap-1.5 text-[11px] font-bold border-primary/20 hover:bg-primary/5 text-primary"
+            onClick={async () => {
+               const allMsgs: Message[] = []
+               const meta = await StorageManager.getMetadata()
+               for(const g of groups) {
+                 for(const s of g.channels) {
+                   const m = await StorageManager.getMessages(s.channel.id)
+                   for (const msg of m) allMsgs.push(msg)
+                 }
                }
-             }
-             allMsgs.sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-             handleExportCSV("FullArchive", allMsgs, meta)
-          }}
-        >
-          <DownloadCloud className="w-3.5 h-3.5" />
-          Export All
-        </Button>
+               allMsgs.sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+               handleExportCSV("FullArchive", allMsgs, meta)
+            }}
+          >
+            <DownloadCloud className="w-3.5 h-3.5" />
+            Export All
+          </Button>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            className="h-8 gap-1.5 text-[11px] font-bold border-destructive/20 hover:bg-destructive/10 text-destructive"
+            onClick={handleDeleteAll}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            Delete All
+          </Button>
+        </div>
       </div>
 
       <ScrollArea className="flex-1 min-h-0">
@@ -274,11 +304,22 @@ export default function DataViewPage() {
                     {group.channels.map(stat => (
                       <div key={stat.channel.id} className="bg-card border border-muted/40 rounded-lg p-3 flex items-center justify-between hover:border-primary/30 transition-shadow shadow-sm">
                         <div className="flex items-center gap-3 min-w-0 flex-1">
-                          <div className="w-8 h-8 flex items-center justify-center bg-muted/30 rounded-md text-muted-foreground shrink-0 border border-muted/10">
-                            <Hash className="w-4 h-4 opacity-70" />
+                          <div className="w-8 h-8 flex items-center justify-center bg-muted/30 rounded-md text-slate-500 shrink-0 border border-muted/10">
+                            {stat.channel.type === 15 ? (
+                              <MessagesSquare className="w-4 h-4 opacity-70 text-indigo-500" />
+                            ) : (
+                              <Hash className="w-4 h-4 opacity-70" />
+                            )}
                           </div>
                           <div className="min-w-0 flex-1">
-                            <h4 className="text-[12px] font-bold truncate text-foreground leading-tight">{stat.channel.name}</h4>
+                            <div className="flex items-center gap-2">
+                              <h4 className="text-[12px] font-bold truncate text-foreground leading-tight">{stat.channel.name}</h4>
+                              {stat.channel.type === 15 && (
+                                <Badge variant="outline" className="text-[9px] px-1.5 h-4 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20 font-bold shrink-0 leading-none flex items-center">
+                                  FORUM
+                                </Badge>
+                              )}
+                            </div>
                             <div className="flex items-center gap-2.5 mt-1 text-[10px] text-muted-foreground font-semibold">
                               <span className="flex items-center gap-1.5">
                                 <Database className="w-3 h-3 text-primary/50" /> {stat.count.toLocaleString()}

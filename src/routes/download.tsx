@@ -14,6 +14,7 @@ export default function DownloadPage() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [currentChannel, setCurrentChannel] = useState<any>(null)
   const [currentGuild, setCurrentGuild] = useState<any>(null)
+  const [autoScroll, setAutoScroll] = useState(true)
 
   useEffect(() => {
     const loadMetadata = async () => {
@@ -34,10 +35,10 @@ export default function DownloadPage() {
   }, [state?.currentChannelId])
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollIntoView({ behavior: 'smooth' })
+    if (autoScroll && scrollRef.current) {
+      scrollRef.current.scrollIntoView({ block: 'end' })
     }
-  }, [state?.logs])
+  }, [state?.logs, autoScroll])
 
   if (!state || state.status === "idle") {
     return (
@@ -106,7 +107,16 @@ export default function DownloadPage() {
         <div className="flex-1 min-h-0 border rounded-xl bg-card/30 overflow-hidden flex flex-col shadow-inner">
           <div className="px-3 py-2 border-b bg-muted/20 flex justify-between items-center shrink-0">
             <h3 className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest">Background Logs</h3>
-            <div className="flex gap-1.5">
+            <div className="flex gap-2 items-center">
+              <label className="flex items-center gap-1 text-[9px] font-bold text-muted-foreground cursor-pointer hover:text-foreground">
+                <input 
+                  type="checkbox" 
+                  checked={autoScroll} 
+                  onChange={(e) => setAutoScroll(e.target.checked)} 
+                  className="w-3 h-3 accent-primary" 
+                />
+                AUTO-SCROLL
+              </label>
               <div className={`w-2 h-2 rounded-full ${status === "paused" ? 'bg-yellow-500' : status === "error" ? 'bg-destructive' : 'bg-green-500'} animate-pulse`} />
             </div>
           </div>

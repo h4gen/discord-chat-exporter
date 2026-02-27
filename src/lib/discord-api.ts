@@ -139,3 +139,63 @@ export async function getMessages(channelId: string, before?: string, limit: num
   }
   return fetchWithRetry(url)
 }
+
+export async function getActiveThreads(guildId: string): Promise<Channel[]> {
+  try {
+    const res = await fetchWithRetry(`${DISCORD_API_BASE}/guilds/${guildId}/threads/active`)
+    return res.threads || []
+  } catch (e) {
+    console.warn(`Could not fetch active threads for guild ${guildId}`, e)
+    return []
+  }
+}
+
+export async function getArchivedThreads(channelId: string, type: 'public' | 'private' = 'public', cutoffDate?: Date): Promise<Channel[]> {
+  let allThreads: Channel[] = []
+  let before: string | undefined = undefined
+  let hasMore = true
+  
+  while (hasMore) {
+    try {
+      let url = `${DISCORD_API_BASE}/channels/${channelId}/threads/archived/${type}?limit=100`
+      if (before) url += `&before=${before}`
+      
+      const res = await fetchWithRetry(url)
+      if (res.threads && res.threads.length > 0) {
+        const lastThread = res.threads[res.threads.length - 1]
+        const archiveTimestamp = (lastThread as any).thread_metadata?.archive_timestamp
+        
+        if (cutoffDate) {
+          const validThreads = res.threads.filter((t: any) => {
+            const ts = t.thread_metadata?.archive_timestamp;
+            return ts ? new Date(ts) >= cutoffDate : true;
+          });
+          allThreads = allThreads.concat(validThreads);
+          
+          if (validThreads.length === 0) {
+            // All threads in this batch were older than cutoff. We can safely abort.
+            hasMore = false;
+            break;
+          }
+        } else {
+          allThreads = allThreads.concat(res.threads)
+        }
+        
+        if (archiveTimestamp) {
+          before = new Date(archiveTimestamp).toISOString()
+        } else {
+          hasMore = false
+        }
+      } else {
+        hasMore = false
+      }
+      
+      hasMore = hasMore && !!res.has_more
+    } catch (e) {
+      console.warn(`Could not fetch archived ${type} threads for channel ${channelId}`, e)
+      hasMore = false
+    }
+  }
+  
+  return allThreads
+}

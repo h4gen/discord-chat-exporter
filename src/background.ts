@@ -1,5 +1,5 @@
 import { StorageManager, storage } from "~lib/storage-manager"
-import { getMessages, getChannel } from "~lib/discord-api"
+import { getMessages, getChannel, getActiveThreads, getArchivedThreads } from "~lib/discord-api"
 import type { Channel } from "~lib/discord-api"
 
 console.log("Discord Downloader Background Script Initialized")
@@ -87,76 +87,140 @@ async function startDownloadEngine() {
 
         await StorageManager.updateDownloadState({ currentChannelId: channelId })
         await StorageManager.addDownloadLog(`Target: ${guildName} [${guild?.id || '?'}] > #${channelName} [${channelId}]`)
-        await StorageManager.addDownloadLog(`Starting backup...`)
         
-        let lastMessageId: string | undefined = undefined
-        let keepFetching = true
-        let channelMessageCount = 0
-        let batch: any[] = []
+        let targets: { id: string, name: string }[] = []
+        
+        // Add the main channel (if it's not a forum, forum itself has no messages)
+        if (channel?.type !== 15) {
+          targets.push({ id: channelId, name: channelName })
+        }
 
-        while (keepFetching) {
-          const innerState = await StorageManager.getDownloadState()
-          if (innerState.status !== "running") {
-            keepFetching = false
-            break
-          }
-
+        if (channel?.guild_id && channel?.guild_id !== "@me") {
+          await StorageManager.addDownloadLog(`Checking for threads in #${channelName}...`)
           try {
-            const messages = await getMessages(channelId, lastMessageId, 100)
-            
-            if (messages.length === 0) {
-              keepFetching = false
-              break
-            }
-
-            const validMessages = messages
-              .filter(m => new Date(m.timestamp) >= cutoffDate)
-              .map(m => ({ ...m, channel_id: channelId }))
-            
-            batch.push(...validMessages)
-            channelMessageCount += validMessages.length
-
-            if (batch.length >= 200) {
-              await StorageManager.saveMessages(channelId, batch)
-              batch = []
-              await StorageManager.addDownloadLog(`Saved ${channelMessageCount} messages for #${channelName}...`)
-            }
-
-            lastMessageId = messages[messages.length - 1].id
-
-            if (new Date(messages[messages.length - 1].timestamp) < cutoffDate) {
-              keepFetching = false
-              break
-            }
-
-            // Anti-ban: Human-like delay between page fetches (1.0s to 2.5s)
-            if (keepFetching) {
-              const delayMs = Math.floor(Math.random() * 1500) + 1000 
-              await new Promise(resolve => setTimeout(resolve, delayMs))
-            }
-
-          } catch (err: any) {
-            if (err.message?.includes("403")) {
-              await StorageManager.addDownloadLog(`Access Denied (403): Skipping #${channelName}`)
-              keepFetching = false
-              break
-            } else {
-              await StorageManager.addDownloadLog(`Error: ${err.message}`)
-              await StorageManager.updateDownloadState({ status: "error" })
-              isProcessRunning = false
-              return
-            }
+             const activeThreads = await getActiveThreads(channel.guild_id)
+             const myActive = activeThreads.filter(t => t.parent_id === channelId)
+             const archivedPublic = await getArchivedThreads(channelId, 'public', cutoffDate)
+             
+             const allThreads = [...myActive, ...archivedPublic]
+             // Dedup threads
+             const uniqueThreads = Array.from(new Map(allThreads.map(t => [t.id, t])).values())
+             
+             if (uniqueThreads.length > 0) {
+               await StorageManager.addDownloadLog(`Found ${uniqueThreads.length} threads in #${channelName}.`)
+               targets.push(...uniqueThreads.map(t => ({ id: t.id, name: t.name || t.id })))
+             }
+          } catch (e) {
+             await StorageManager.addDownloadLog(`Could not fetch threads for #${channelName}.`)
           }
         }
-        
-        if (batch.length > 0) {
-          await StorageManager.saveMessages(channelId, batch)
+
+        if (targets.length === 0 && channel?.type === 15) {
+           await StorageManager.addDownloadLog(`No threads found in forum #${channelName}.`)
+        }
+
+        for (const target of targets) {
+          const isThread = target.id !== channelId;
+          const displayTargetName = isThread ? `${channelName} > ${target.name}` : channelName;
+          await StorageManager.addDownloadLog(`Starting backup for ${isThread ? 'thread' : 'channel'} ${displayTargetName}...`)
+          
+          const existingMessagesInDb = await StorageManager.getMessages(channelId);
+          const existingIds = new Set(existingMessagesInDb.map(m => m.id));
+          const targetMessages = existingMessagesInDb.filter(m => isThread ? (m as any).thread_id === target.id : !(m as any).thread_id);
+          const oldestExistingId = targetMessages.length > 0 ? targetMessages[targetMessages.length - 1].id : undefined;
+          const absoluteOldestKnownObj = targetMessages.length > 0 ? new Date(targetMessages[targetMessages.length - 1].timestamp).getTime() : 0;
+
+          let lastMessageId: string | undefined = undefined
+          let keepFetching = true
+          let channelMessageCount = 0
+          let batch: any[] = []
+
+          while (keepFetching) {
+            const innerState = await StorageManager.getDownloadState()
+            if (innerState.status !== "running") {
+              keepFetching = false
+              break
+            }
+
+            try {
+              const messages = await getMessages(target.id, lastMessageId, 100)
+              
+              if (messages.length === 0) {
+                keepFetching = false
+                break
+              }
+
+              const allFetchedAreKnown = messages.every(m => existingIds.has(m.id));
+
+              const validMessages = messages
+                .filter(m => new Date(m.timestamp) >= cutoffDate)
+                .filter(m => !existingIds.has(m.id))
+                .map(m => ({ 
+                  ...m, 
+                  channel_id: channelId, // bucket into the parent channel for DB 
+                  ...(isThread ? { thread_id: target.id, thread_name: target.name } : {})
+                }))
+              
+              validMessages.forEach(m => existingIds.add(m.id));
+              batch.push(...validMessages)
+              channelMessageCount += validMessages.length
+
+              if (batch.length >= 200) {
+                await StorageManager.saveMessages(channelId, batch)
+                batch = []
+                await StorageManager.addDownloadLog(`Saved ${channelMessageCount} new messages for ${displayTargetName}...`)
+              }
+
+              lastMessageId = messages[messages.length - 1].id
+
+              if (new Date(messages[messages.length - 1].timestamp) < cutoffDate) {
+                keepFetching = false
+                break
+              }
+              
+              if (allFetchedAreKnown && oldestExistingId) {
+                const currentOldestFetched = new Date(messages[messages.length - 1].timestamp).getTime();
+                if (currentOldestFetched > absoluteOldestKnownObj) {
+                  await StorageManager.addDownloadLog(`Fast-forwarding past known messages...`);
+                  lastMessageId = oldestExistingId;
+                }
+              }
+
+              // Anti-ban: Human-like delay between page fetches (1.0s to 2.5s)
+              if (keepFetching) {
+                const delayMs = Math.floor(Math.random() * 1500) + 1000 
+                await new Promise(resolve => setTimeout(resolve, delayMs))
+              }
+
+            } catch (err: any) {
+              if (err.message?.includes("403")) {
+                await StorageManager.addDownloadLog(`Access Denied (403): Skipping ${displayTargetName}`)
+                keepFetching = false
+                break
+              } else if (err.message?.includes("400")) {
+                await StorageManager.addDownloadLog(`Bad Request (400): Skipping ${displayTargetName}. (Normal for empty forums)`)
+                keepFetching = false
+                break
+              } else {
+                await StorageManager.addDownloadLog(`Error: ${err.message}`)
+                await StorageManager.updateDownloadState({ status: "error" })
+                isProcessRunning = false
+                return
+              }
+            }
+          }
+          
+          if (batch.length > 0) {
+            await StorageManager.saveMessages(channelId, batch)
+          }
+          
+          await StorageManager.addDownloadLog(`Finished: ${channelMessageCount} new messages from ${displayTargetName}.`)
         }
 
         completed++
         const newProgress = Math.round((completed / selectedChannels.length) * 100)
         await StorageManager.updateDownloadState({ progress: newProgress })
-        await StorageManager.addDownloadLog(`Channel #${channelName} backup complete.`)
+        await StorageManager.addDownloadLog(`Finished processing #${channelName} (Total completed: ${completed}/${selectedChannels.length})`)
 
         if (completed < selectedChannels.length) {
           const nextChannelDelay = Math.floor(Math.random() * 2000) + 2000 // 2s - 4s

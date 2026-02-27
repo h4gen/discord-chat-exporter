@@ -7,7 +7,7 @@ import { ScrollArea } from "~components/ui/scroll-area"
 import { Checkbox } from "~components/ui/checkbox"
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "~components/ui/accordion"
 import { Badge } from "~components/ui/badge"
-import { Hash, Loader2, CheckSquare, Square, RefreshCw } from "lucide-react"
+import { Hash, Loader2, CheckSquare, Square, RefreshCw, MessagesSquare } from "lucide-react"
 import { useStorage } from "@plasmohq/storage/hook"
 import { StorageManager, storage } from "~lib/storage-manager"
 
@@ -81,10 +81,15 @@ export default function SelectChannelsPage() {
 
   const toggleAllInGuild = (guildId: string, e: React.MouseEvent) => {
     e.stopPropagation()
-    const channels = channelsByGuild[guildId]
     const currentSelected = selectedChannels || []
+    
+    // First try loaded channels, fallback to metadata
+    let channels = channelsByGuild[guildId]
+    if (!channels && metadata && metadata.channels) {
+      channels = Object.values(metadata.channels).filter((c: any) => c.guild_id === guildId) as Channel[]
+    }
 
-    if (!channels) {
+    if (!channels || channels.length === 0) {
       loadChannels(guildId).then(() => {
         setChannelsByGuild(current => {
           const loadedChannels = current[guildId] || []
@@ -158,15 +163,27 @@ export default function SelectChannelsPage() {
       <div className="px-4 py-3 border-b space-y-3 bg-card shrink-0">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold">Select Target Channels</h2>
-          <Button 
-            variant="ghost" 
-            size="icon" 
-            className="h-8 w-8 text-muted-foreground"
-            onClick={() => loadGuilds(true)}
-            disabled={isRefreshing}
-          >
-            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-          </Button>
+          <div className="flex items-center gap-2">
+            {(selectedChannels?.length || 0) > 0 && (
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="h-8 text-[11px] font-bold text-destructive hover:bg-destructive/10"
+                onClick={() => setSelectedChannels([])}
+              >
+                Clear Selection
+              </Button>
+            )}
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              className="h-8 w-8 text-muted-foreground"
+              onClick={() => loadGuilds(true)}
+              disabled={isRefreshing}
+            >
+              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
         </div>
         
         <div className="flex items-center justify-between bg-muted/50 p-2 rounded-lg">
@@ -201,9 +218,13 @@ export default function SelectChannelsPage() {
           <Accordion type="single" collapsible onValueChange={handleGuildExpand} value={expandedGuild}>
             {guilds.map((guild) => {
               const selectedCount = getSelectedCountInGuild(guild.id)
-              const totalCount = channelsByGuild[guild.id]?.length || 0
-              const currentSelected = selectedChannels || []
-              const allSelected = totalCount > 0 && (channelsByGuild[guild.id]?.every(c => currentSelected.includes(c.id)))
+              
+              let guildChannelsInMeta = []
+              if (metadata && metadata.channels) {
+                 guildChannelsInMeta = Object.values(metadata.channels).filter((c: any) => c.guild_id === guild.id)
+              }
+              const totalCount = channelsByGuild[guild.id]?.length || guildChannelsInMeta.length || 0
+              const allSelected = totalCount > 0 && selectedCount === totalCount
 
               return (
                 <AccordionItem key={guild.id} value={guild.id} className="border-none mb-2.5">
@@ -258,10 +279,19 @@ export default function SelectChannelsPage() {
                                 />
                               </div>
                               <div className="flex items-center gap-2 min-w-0 flex-1">
-                                <Hash className="w-4 h-4 text-muted-foreground group-hover:text-primary/70 transition-colors shrink-0" />
+                                {channel.type === 15 ? (
+                                  <MessagesSquare className="w-4 h-4 text-indigo-500/80 group-hover:text-indigo-500 transition-colors shrink-0" />
+                                ) : (
+                                  <Hash className="w-4 h-4 text-muted-foreground group-hover:text-primary/70 transition-colors shrink-0" />
+                                )}
                                 <span className={`text-[12px] font-bold truncate transition-colors ${(selectedChannels || []).includes(channel.id) ? 'text-foreground' : 'text-muted-foreground group-hover:text-foreground'}`}>
                                   {channel.name}
                                 </span>
+                                {channel.type === 15 && (
+                                  <Badge variant="outline" className="text-[9px] px-1.5 h-4 ml-auto bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20 font-bold shrink-0 leading-none flex items-center">
+                                    FORUM
+                                  </Badge>
+                                )}
                               </div>
                             </label>
                           ))}

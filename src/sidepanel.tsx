@@ -6,7 +6,8 @@ import { Button } from "~components/ui/button"
 import SelectChannelsPage from "~routes/select"
 import DownloadPage from "~routes/download"
 import { storage, StorageManager } from "~lib/storage-manager"
-import DataViewPage from "~routes/data"
+import DataViewPage, { FULL_CSV_COLUMNS } from "~routes/data"
+import { Checkbox } from "~components/ui/checkbox"
 
 function Layout({ children }: { children: React.ReactNode }) {
   const [token] = useStorage<string>({ key: "discord_token", instance: storage as any })
@@ -87,33 +88,64 @@ function LandingPage() {
 
 function DevSettingsPage() {
   const [token, setToken] = useStorage<string>({ key: "discord_token", instance: storage as any })
+  const [exportColumns, setExportColumns] = useStorage<string[]>({ key: "export_columns", instance: storage as any }, FULL_CSV_COLUMNS)
+
+  const toggleColumn = (col: string) => {
+    setExportColumns(prev => {
+      const curr = prev || FULL_CSV_COLUMNS
+      if (curr.includes(col)) return curr.filter(c => c !== col)
+      // preserve absolute ordering based on how it's defined in FULL_CSV_COLUMNS
+      return FULL_CSV_COLUMNS.filter(c => curr.includes(c) || c === col)
+    })
+  }
 
   return (
-    <div className="p-4 space-y-4">
-      <h2 className="text-lg font-semibold">Settings / Debug</h2>
-      <div>
-        <label className="text-sm font-medium text-muted-foreground">Detected Token</label>
-        <div className="mt-1 p-2 bg-muted rounded-md text-xs break-all font-mono">
-          {token || "No token detected"}
+    <div className="p-4 space-y-6">
+      <div className="space-y-3">
+        <h2 className="text-sm font-semibold uppercase text-muted-foreground tracking-wider">CSV Export Columns</h2>
+        <div className="grid grid-cols-2 gap-2 bg-muted/20 p-3 rounded-lg border">
+          {FULL_CSV_COLUMNS.map(col => {
+            const isChecked = (exportColumns || FULL_CSV_COLUMNS).includes(col)
+            return (
+              <label key={col} className="flex items-center gap-2 text-xs font-medium cursor-pointer hover:text-primary transition-colors">
+                <Checkbox 
+                  checked={isChecked} 
+                  onCheckedChange={() => toggleColumn(col)} 
+                  className="w-4 h-4 rounded-[4px]"
+                />
+                {col}
+              </label>
+            )
+          })}
         </div>
       </div>
-      <div className="flex gap-2">
-        <Button variant="destructive" onClick={() => setToken("")} className="flex-1">
-          Clear Token
-        </Button>
-        <Button 
-          variant="destructive" 
-          className="flex-1"
-          onClick={async () => {
-            if (confirm("Are you sure? This will permanently delete all downloaded messages and metadata.")) {
-              await storage.clear()
-              alert("All local data has been wiped.")
-              window.location.reload()
-            }
-          }}
-        >
-          Wipe Local Data
-        </Button>
+
+      <div className="space-y-3 pt-2 border-t">
+        <h2 className="text-sm font-semibold uppercase text-muted-foreground tracking-wider">Debug Options</h2>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground">Detected Token</label>
+          <div className="mt-1 p-2 bg-muted rounded-md text-[10px] break-all font-mono opacity-60 hover:opacity-100 transition-opacity">
+            {token || "No token detected"}
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="destructive" onClick={() => setToken("")} className="flex-1 text-xs h-8">
+            Clear Token
+          </Button>
+          <Button 
+            variant="destructive" 
+            className="flex-1 text-xs h-8"
+            onClick={async () => {
+              if (confirm("Are you sure? This will permanently delete all downloaded messages and metadata.")) {
+                await storage.clear()
+                alert("All local data has been wiped.")
+                window.location.reload()
+              }
+            }}
+          >
+            Wipe Local Data
+          </Button>
+        </div>
       </div>
     </div>
   )
